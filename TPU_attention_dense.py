@@ -180,7 +180,7 @@ def main(argv):
           sum_attn += pred['attention']
       cnt += 1
   print(sum_attn/cnt)
-  print(ATTENTION_COLUMN, np.argmax(preds))
+  print(ATTENTION_COLUMN, np.argmax(sum_attn))
 
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)
