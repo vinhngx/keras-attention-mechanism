@@ -39,7 +39,7 @@ def get_data(n, input_dim, attention_column=1):
     return x, y
 
 
-def get_data_recurrent(n, time_steps, input_dim, attention_column=10):
+def get_data_recurrent(n, time_steps, input_dim, attention_column=13):
     """
     Data generation. x is purely random except that it's first value equals the target y.
     In practice, the network should learn that the target = x[attention_column].

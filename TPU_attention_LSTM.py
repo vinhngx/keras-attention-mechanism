@@ -29,6 +29,8 @@ APPLY_ATTENTION_BEFORE_LSTM = False
 LABEL_CLASSES = 2
 USE_TPU = False
 TPU_NAME = ''
+ATTENTION_COLUMN=13
+
 
 def attention_3d_block(inputs):
     # inputs.shape = (batch_size, time_steps, input_dim)
@@ -156,7 +158,8 @@ def model_fn(features, labels, mode, params):
 class MyInput(object): 
     def __init__(self, is_training=True, N=100000):
           self.is_training = is_training
-          inputs_1, outputs = get_data_recurrent(N, TIME_STEPS, INPUT_DIM)
+          inputs_1, outputs = get_data_recurrent(N, TIME_STEPS, INPUT_DIM,
+                                                 ATTENTION_COLUMN)
           self.outputs = np.asarray(outputs, 'float32')
           self.inputs_1 = np.asarray(inputs_1, 'float32')
     
@@ -208,7 +211,7 @@ def main(argv):
       train_batch_size=256,
       )
   
-  estimator.train(input_fn=train_data.input_fn, max_steps=10000)
+  estimator.train(input_fn=train_data.input_fn, max_steps=20000)
 
 
   #testing      
@@ -233,6 +236,18 @@ def main(argv):
       cnt += 1
   print(sum_attn/cnt)
   
+  sum_attn = np.mean(np.array(sum_attn), axis=1)
+  print(sum_attn) 
+  print(np.argmax(sum_attn), ATTENTION_COLUMN)
+  
+  """
+  import matplotlib.pyplot as plt
+  import pandas as pd
+  pd.DataFrame(sum_attn, columns=['attention (%)']).plot(kind='bar', title='Attention Mechanism as '
+                                                                           'a function of input'
+                                                                           ' dimensions.')
+  """
+
 
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)
