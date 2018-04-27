@@ -6,7 +6,6 @@ import numpy as np
 np.random.seed(1337)  # for reproducibility
 
 import tensorflow as tf
-from keras.layers import Input, Dense, merge
 from tensorflow.contrib.tpu.python.tpu import tpu_config
 from tensorflow.contrib.tpu.python.tpu import tpu_estimator
 from tensorflow.contrib.tpu.python.tpu import tpu_optimizer
@@ -31,18 +30,24 @@ USE_TPU = False
 TPU_NAME = 'longjob-inceptionv4'
 ATTENTION_COLUMN=13
 
+MODEL_DIR = './LSTM_model_ckpt'
+if USE_TPU:
+    MODEL_DIR='gs://vinh-tutorial/output/RNN/LSTM_model_ckpt'
+    
 
 def attention_3d_block(inputs):
     # inputs.shape = (batch_size, time_steps, input_dim)
+    layers = tf.contrib.keras.layers
+    
     input_dim = int(inputs.shape[2])
-    a = Permute((2, 1))(inputs)
-    a = Reshape((input_dim, TIME_STEPS))(a) # this line is not useful. It's just to know which dimension is what.
-    a = Dense(TIME_STEPS, activation='softmax')(a)
+    a = layers.Permute((2, 1))(inputs)
+    a = layers.Reshape((input_dim, TIME_STEPS))(a) # this line is not useful. It's just to know which dimension is what.
+    a = layers.Dense(TIME_STEPS, activation='softmax')(a)
     if SINGLE_ATTENTION_VECTOR:
-        a = Lambda(lambda x: K.mean(x, axis=1), name='dim_reduction')(a)
-        a = RepeatVector(input_dim)(a)
-    a_probs = Permute((2, 1), name='attention_vec')(a)
-    output_attention_mul = merge([inputs, a_probs], name='attention_mul', mode='mul')
+        a = layers.Lambda(lambda x: K.mean(x, axis=1), name='dim_reduction')(a)
+        a = layers.RepeatVector(input_dim)(a)
+    a_probs = layers.Permute((2, 1), name='attention_vec')(a)
+    output_attention_mul = layers.Multiply()([inputs, a_probs])
     return output_attention_mul
 
 
@@ -71,22 +76,23 @@ def model_fn(features, labels, mode, params):
   del params  # unused
   
   # Pass our input tensor to initialize the Keras input layer.
-  inputs = Input(tensor=features)
+  layers = tf.contrib.keras.layers
+  inputs = layers.Input(tensor=features)
 
   # ATTENTION PART STARTS HERE
   input_dim = int(inputs.shape[2])
-  a = Permute((2, 1))(inputs)
-  a = Reshape((input_dim, TIME_STEPS))(a) # this line is not useful. It's just to know which dimension is what.
-  a = Dense(TIME_STEPS, activation='softmax')(a)
+  a = layers.Permute((2, 1))(inputs)
+  a = layers.Reshape((input_dim, TIME_STEPS))(a) # this line is not useful. It's just to know which dimension is what.
+  a = layers.Dense(TIME_STEPS, activation='softmax')(a)
   if SINGLE_ATTENTION_VECTOR:
-        a = Lambda(lambda x: K.mean(x, axis=1), name='dim_reduction')(a)
-        a = RepeatVector(input_dim)(a)
-  a_probs = Permute((2, 1), name='attention_vec')(a)
-  attention_mul = merge([inputs, a_probs], name='attention_mul', mode='mul')
+        a = layers.Lambda(lambda x: K.mean(x, axis=1), name='dim_reduction')(a)
+        a = layers.RepeatVector(input_dim)(a)
+  a_probs = layers.Permute((2, 1), name='attention_vec')(a)
+  attention_mul = layers.Multiply()([inputs, a_probs])
 
-  attention_mul = LSTM(HIDDEN_UNITS, return_sequences=False)(attention_mul)
+  attention_mul = layers.LSTM(HIDDEN_UNITS, return_sequences=False)(attention_mul)
   
-  logits = Dense(1)(attention_mul)
+  logits = layers.Dense(1)(attention_mul)
 
   if mode == tf.estimator.ModeKeys.PREDICT:
         predicted_classes = tf.greater(tf.sigmoid(logits), 0.5)
@@ -192,7 +198,7 @@ def main(argv):
 
   run_config = tpu_config.RunConfig(
       master=tpu_grpc_url,
-      model_dir='./model_ckpt',
+      model_dir=MODEL_DIR,
       save_checkpoints_secs=3600,
       session_config=tf.ConfigProto(
           allow_soft_placement=True, log_device_placement=True),
@@ -202,27 +208,29 @@ def main(argv):
   )
 
   train_data = MyInput(is_training=True, N=100000)
-  test_data  = MyInput(is_training=False, N=1000)
+  test_data  = MyInput(is_training=False, N=2560)
 
   estimator = tpu_estimator.TPUEstimator(
       model_fn=model_fn,
       use_tpu=USE_TPU,
       config=run_config,
       train_batch_size=256,
+      eval_batch_size=256,
+      predict_batch_size=256,
       )
   
   estimator.train(input_fn=train_data.input_fn, max_steps=20000)
 
 
   #testing      
-  preds = estimator.evaluate(input_fn=test_data.input_fn, 
+  preds = estimator.evaluate(input_fn=test_data.input_fn, steps=10
                             #yield_single_examples=False
                             )
   
   print(preds)
 
   
-  preds = estimator.predict(input_fn=test_data.input_fn, 
+  preds = estimator.predict(input_fn=test_data.input_fn, steps=10
                             #yield_single_examples=False
                             )
     

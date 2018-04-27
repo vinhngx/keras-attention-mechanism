@@ -17,6 +17,10 @@ LABEL_CLASSES = 2
 
 USE_TPU = False
 #USE_TPU = True
+MODEL_DIR = './dense_model_ckpt'
+if USE_TPU:
+    MODEL_DIR='gs://vinh-tutorial/output/RNN/dense_model_ckpt'
+
 
 TPU_NAME = 'longjob-inceptionv4'
 ATTENTION_COLUMN = 5
@@ -106,14 +110,14 @@ def model_fn(features, labels, mode, params):
 
 
 class MyInput(object): 
-    def __init__(self, is_training=True, N=10000):
+    def __init__(self, is_training=True, is_eval=True, N=10000):
           self.is_training = is_training
+          self.is_eval = is_eval
           inputs_1, outputs = get_data(N, input_dim, ATTENTION_COLUMN)
           self.outputs = np.asarray(outputs, 'float32')
           self.inputs_1 = np.asarray(inputs_1, 'float32')
     
-    def input_fn(self, params):
-      """Read CIFAR input data from a TFRecord dataset."""        
+    def input_fn(self, params):      
       dataset = tf.data.Dataset.from_tensor_slices((self.inputs_1,
                                                     self.outputs))
       
@@ -127,7 +131,11 @@ class MyInput(object):
           
       dataset = dataset.prefetch(4)
       images, labels = dataset.make_one_shot_iterator().get_next()
-      return images, labels
+      if self.is_training or self.is_eval:
+          return images, labels
+      else:
+          return images
+
 
 
 
@@ -141,7 +149,7 @@ def main(argv):
 
   run_config = tpu_config.RunConfig(
       master=tpu_grpc_url,
-      model_dir='./dense_model_ckpt',
+      model_dir=MODEL_DIR,
       save_checkpoints_secs=3600,
       session_config=tf.ConfigProto(
           allow_soft_placement=True, log_device_placement=True),
@@ -150,28 +158,30 @@ def main(argv):
           num_shards=8),
   )
 
-  train_data = MyInput(is_training=True, N=10000)
-  test_data  = MyInput(is_training=False, N=1000)
-
+  train_data = MyInput(is_training=True, is_eval=False, N=10000)
+  eval_data  = MyInput(is_training=False, is_eval=True, N=2560)
+  test_data  = MyInput(is_training=False, is_eval=False, N=2560)  
+  
   estimator = tpu_estimator.TPUEstimator(
       model_fn=model_fn,
       use_tpu=USE_TPU,
       config=run_config,
       train_batch_size=256,
       eval_batch_size=256,
+      predict_batch_size=256,
       )
   
   estimator.train(input_fn=train_data.input_fn, max_steps=10000)
 
 
   #testing      
-  preds = estimator.evaluate(input_fn=test_data.input_fn, 
+  preds = estimator.evaluate(input_fn=eval_data.input_fn, steps=10, 
                             #yield_single_examples=False
                             )
   
   print(preds)
   
-  preds = estimator.predict(input_fn=test_data.input_fn, 
+  preds = estimator.predict(input_fn=test_data.input_fn,
                             #yield_single_examples=False
                             )
     
