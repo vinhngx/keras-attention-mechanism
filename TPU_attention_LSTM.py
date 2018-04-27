@@ -11,26 +11,79 @@ from tensorflow.contrib.tpu.python.tpu import tpu_config
 from tensorflow.contrib.tpu.python.tpu import tpu_estimator
 from tensorflow.contrib.tpu.python.tpu import tpu_optimizer
 
+from keras.layers import merge
+from keras.layers.core import *
+from keras.layers.recurrent import LSTM
+from keras.models import *
+
+
+
 from attention_utils import get_data
 
-input_dim = 10
+INPUT_DIM = 2
+TIME_STEPS = 20
+HIDDEN_UNITS = 32
+# if True, the attention vector is shared across the input_dimensions where the attention is applied.
+SINGLE_ATTENTION_VECTOR = False
+APPLY_ATTENTION_BEFORE_LSTM = False
 LABEL_CLASSES = 2
 USE_TPU = False
 TPU_NAME = ''
+
+def attention_3d_block(inputs):
+    # inputs.shape = (batch_size, time_steps, input_dim)
+    input_dim = int(inputs.shape[2])
+    a = Permute((2, 1))(inputs)
+    a = Reshape((input_dim, TIME_STEPS))(a) # this line is not useful. It's just to know which dimension is what.
+    a = Dense(TIME_STEPS, activation='softmax')(a)
+    if SINGLE_ATTENTION_VECTOR:
+        a = Lambda(lambda x: K.mean(x, axis=1), name='dim_reduction')(a)
+        a = RepeatVector(input_dim)(a)
+    a_probs = Permute((2, 1), name='attention_vec')(a)
+    output_attention_mul = merge([inputs, a_probs], name='attention_mul', mode='mul')
+    return output_attention_mul
+
+
+def model_attention_applied_after_lstm():
+    inputs = Input(shape=(TIME_STEPS, INPUT_DIM,))
+    lstm_units = 32
+    lstm_out = LSTM(lstm_units, return_sequences=True)(inputs)
+    attention_mul = attention_3d_block(lstm_out)
+    attention_mul = Flatten()(attention_mul)
+    output = Dense(1, activation='sigmoid')(attention_mul)
+    model = Model(input=[inputs], output=output)
+    return model
+
+
+def model_attention_applied_before_lstm():
+    inputs = Input(shape=(TIME_STEPS, INPUT_DIM,))
+    attention_mul = attention_3d_block(inputs)
+    lstm_units = 32
+    attention_mul = LSTM(lstm_units, return_sequences=False)(attention_mul)
+    output = Dense(1, activation='sigmoid')(attention_mul)
+    model = Model(input=[inputs], output=output)
+    return model
 
 def model_fn(features, labels, mode, params):
   """Define a simple Dense attention model in Keras."""
   del params  # unused
   
   # Pass our input tensor to initialize the Keras input layer.
-  v = Input(tensor=features)
+  inputs = Input(tensor=features)
 
   # ATTENTION PART STARTS HERE
-  attention_probs = Dense(input_dim, activation='softmax', name='attention_vec')(v)
-  attention_mul = merge([v, attention_probs], output_shape=32, name='attention_mul', mode='mul')
-  # ATTENTION PART FINISHES HERE
+  input_dim = int(inputs.shape[2])
+  a = Permute((2, 1))(inputs)
+  a = Reshape((input_dim, TIME_STEPS))(a) # this line is not useful. It's just to know which dimension is what.
+  a = Dense(TIME_STEPS, activation='softmax')(a)
+  if SINGLE_ATTENTION_VECTOR:
+        a = Lambda(lambda x: K.mean(x, axis=1), name='dim_reduction')(a)
+        a = RepeatVector(input_dim)(a)
+  a_probs = Permute((2, 1), name='attention_vec')(a)
+  attention_mul = merge([inputs, a_probs], name='attention_mul', mode='mul')
 
-  attention_mul = Dense(64)(attention_mul)
+  attention_mul = LSTM(HIDDEN_UNITS, return_sequences=False)(attention_mul)
+  
   logits = Dense(1)(attention_mul)
 
   if mode == tf.estimator.ModeKeys.PREDICT:
@@ -40,7 +93,7 @@ def model_fn(features, labels, mode, params):
             'class_ids': predicted_classes,
             'probabilities': tf.nn.sigmoid(logits),
             'logits': logits,
-            'attention': attention_probs,
+            'attention': a_probs,
         }
         return tpu_estimator.TPUEstimatorSpec(mode, predictions=predictions)       
 
@@ -101,9 +154,9 @@ def model_fn(features, labels, mode, params):
 
 
 class MyInput(object): 
-    def __init__(self, is_training=True, N=10000):
+    def __init__(self, is_training=True, N=100000):
           self.is_training = is_training
-          inputs_1, outputs = get_data(N, input_dim)
+          inputs_1, outputs = get_data_recurrent(N, TIME_STEPS, INPUT_DIM)
           self.outputs = np.asarray(outputs, 'float32')
           self.inputs_1 = np.asarray(inputs_1, 'float32')
     
@@ -136,7 +189,7 @@ def main(argv):
 
   run_config = tpu_config.RunConfig(
       master=tpu_grpc_url,
-      model_dir='.',
+      model_dir='./model_ckpt',
       save_checkpoints_secs=3600,
       session_config=tf.ConfigProto(
           allow_soft_placement=True, log_device_placement=True),
@@ -145,7 +198,7 @@ def main(argv):
           num_shards=8),
   )
 
-  train_data = MyInput(is_training=True, N=10000)
+  train_data = MyInput(is_training=True, N=100000)
   test_data  = MyInput(is_training=False, N=1000)
 
   estimator = tpu_estimator.TPUEstimator(
