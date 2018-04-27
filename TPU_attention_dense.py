@@ -6,7 +6,6 @@ import numpy as np
 np.random.seed(1337)  # for reproducibility
 
 import tensorflow as tf
-from keras.layers import Input, Dense, merge
 from tensorflow.contrib.tpu.python.tpu import tpu_config
 from tensorflow.contrib.tpu.python.tpu import tpu_estimator
 from tensorflow.contrib.tpu.python.tpu import tpu_optimizer
@@ -17,21 +16,24 @@ input_dim = 10
 LABEL_CLASSES = 2
 USE_TPU = False
 TPU_NAME = ''
+ATTENTION_COLUMN = 5
 
 def model_fn(features, labels, mode, params):
   """Define a simple Dense attention model in Keras."""
   del params  # unused
   
   # Pass our input tensor to initialize the Keras input layer.
-  v = Input(tensor=features)
+  layers = tf.contrib.keras.layers
+  
+  v = layers.Input(tensor=features)
 
   # ATTENTION PART STARTS HERE
-  attention_probs = Dense(input_dim, activation='softmax', name='attention_vec')(v)
-  attention_mul = merge([v, attention_probs], output_shape=32, name='attention_mul', mode='mul')
+  attention_probs = layers.Dense(input_dim, activation='softmax', name='attention_vec')(v)
+  attention_mul = layers.Multiply()([v, attention_probs])
   # ATTENTION PART FINISHES HERE
 
-  attention_mul = Dense(64)(attention_mul)
-  logits = Dense(1)(attention_mul)
+  attention_mul = layers.Dense(64)(attention_mul)
+  logits = layers.Dense(1)(attention_mul)
 
   if mode == tf.estimator.ModeKeys.PREDICT:
         predicted_classes = tf.greater(tf.sigmoid(logits), 0.5)
@@ -103,7 +105,7 @@ def model_fn(features, labels, mode, params):
 class MyInput(object): 
     def __init__(self, is_training=True, N=10000):
           self.is_training = is_training
-          inputs_1, outputs = get_data(N, input_dim)
+          inputs_1, outputs = get_data(N, input_dim, ATTENTION_COLUMN)
           self.outputs = np.asarray(outputs, 'float32')
           self.inputs_1 = np.asarray(inputs_1, 'float32')
     
@@ -136,7 +138,7 @@ def main(argv):
 
   run_config = tpu_config.RunConfig(
       master=tpu_grpc_url,
-      model_dir='.',
+      model_dir='./dense_model_ckpt',
       save_checkpoints_secs=3600,
       session_config=tf.ConfigProto(
           allow_soft_placement=True, log_device_placement=True),
@@ -164,7 +166,6 @@ def main(argv):
                             )
   
   print(preds)
-
   
   preds = estimator.predict(input_fn=test_data.input_fn, 
                             #yield_single_examples=False
@@ -179,7 +180,7 @@ def main(argv):
           sum_attn += pred['attention']
       cnt += 1
   print(sum_attn/cnt)
-  
+  print(ATTENTION_COLUMN, np.argmax(preds))
 
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)
