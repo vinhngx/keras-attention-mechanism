@@ -90,7 +90,13 @@ def model_fn(features, labels, mode, params):
   a_probs = layers.Permute((2, 1), name='attention_vec')(a)
   attention_mul = layers.Multiply()([inputs, a_probs])
 
-  attention_mul = layers.LSTM(HIDDEN_UNITS, return_sequences=False)(attention_mul)
+  #attention_mul = layers.LSTM(HIDDEN_UNITS, return_sequences=False)(attention_mul)
+  
+  word_list = tf.unstack(attention_mul, axis=1)
+  cell = tf.nn.rnn_cell.BasicLSTMCell(HIDDEN_UNITS, state_is_tuple=False)
+  # Create an unrolled Recurrent Neural Networks to length of
+  # MAX_DOCUMENT_LENGTH and passes word_list as inputs for each unit.
+  _, attention_mul = tf.nn.static_rnn(cell, word_list, dtype=tf.float32)
   
   logits = layers.Dense(1)(attention_mul)
 
