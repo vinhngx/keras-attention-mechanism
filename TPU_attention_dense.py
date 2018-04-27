@@ -15,7 +15,7 @@ from attention_utils import get_data
 input_dim = 10
 LABEL_CLASSES = 2
 USE_TPU = False
-TPU_NAME = ''
+TPU_NAME = 'longjob-inceptionv4'
 ATTENTION_COLUMN = 5
 
 def model_fn(features, labels, mode, params):
