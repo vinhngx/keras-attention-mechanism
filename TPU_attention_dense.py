@@ -134,7 +134,7 @@ class MyInput(object):
       if self.is_training or self.is_eval:
           return images, labels
       else:
-          return images
+          return dataset
 
 
 

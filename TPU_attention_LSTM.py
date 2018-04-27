@@ -17,7 +17,7 @@ from keras.models import *
 
 
 
-from attention_utils import get_data
+from attention_utils import get_data_recurrent
 
 INPUT_DIM = 2
 TIME_STEPS = 20
@@ -162,15 +162,15 @@ def model_fn(features, labels, mode, params):
 
 
 class MyInput(object): 
-    def __init__(self, is_training=True, N=100000):
+    def __init__(self, is_training=True, is_eval=True, N=100000):
           self.is_training = is_training
+          self.is_eval = is_eval
           inputs_1, outputs = get_data_recurrent(N, TIME_STEPS, INPUT_DIM,
                                                  ATTENTION_COLUMN)
           self.outputs = np.asarray(outputs, 'float32')
           self.inputs_1 = np.asarray(inputs_1, 'float32')
     
-    def input_fn(self, params):
-      """Read CIFAR input data from a TFRecord dataset."""        
+    def input_fn(self, params):      
       dataset = tf.data.Dataset.from_tensor_slices((self.inputs_1,
                                                     self.outputs))
       
@@ -184,7 +184,10 @@ class MyInput(object):
           
       dataset = dataset.prefetch(4)
       images, labels = dataset.make_one_shot_iterator().get_next()
-      return images, labels
+      if self.is_training or self.is_eval:
+          return images, labels
+      else:
+          return dataset
 
 
 
@@ -207,8 +210,9 @@ def main(argv):
           num_shards=8),
   )
 
-  train_data = MyInput(is_training=True, N=100000)
-  test_data  = MyInput(is_training=False, N=2560)
+  train_data = MyInput(is_training=True, is_eval=False, N=100000)
+  eval_data  = MyInput(is_training=False, is_eval=True, N=2560)
+  test_data  = MyInput(is_training=False, is_eval=False, N=2560)  
 
   estimator = tpu_estimator.TPUEstimator(
       model_fn=model_fn,
@@ -230,7 +234,7 @@ def main(argv):
   print(preds)
 
   
-  preds = estimator.predict(input_fn=test_data.input_fn, steps=10
+  preds = estimator.predict(input_fn=test_data.input_fn,
                             #yield_single_examples=False
                             )
     
