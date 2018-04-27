@@ -14,7 +14,10 @@ from attention_utils import get_data
 
 input_dim = 10
 LABEL_CLASSES = 2
+
 USE_TPU = False
+#USE_TPU = True
+
 TPU_NAME = 'longjob-inceptionv4'
 ATTENTION_COLUMN = 5
 
@@ -155,6 +158,7 @@ def main(argv):
       use_tpu=USE_TPU,
       config=run_config,
       train_batch_size=256,
+      eval_batch_size=256,
       )
   
   estimator.train(input_fn=train_data.input_fn, max_steps=10000)
