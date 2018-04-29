@@ -1,6 +1,7 @@
 import keras.backend as K
 import numpy as np
 
+PI=3.14
 
 def get_activations(model, inputs, print_shape_only=False, layer_name=None):
     # Documentation is available online on Github at the address below.
@@ -39,7 +40,7 @@ def get_data(n, input_dim, attention_column=1):
     return x, y
 
 
-def get_data_recurrent(n, time_steps, input_dim, attention_column=13):
+def get_data_recurrent_indicator(n, time_steps, input_dim, attention_column=13):
     """
     Data generation. x is purely random except that it's first value equals the target y.
     In practice, the network should learn that the target = x[attention_column].
@@ -54,3 +55,30 @@ def get_data_recurrent(n, time_steps, input_dim, attention_column=13):
     y = np.random.randint(low=0, high=2, size=(n, 1))
     x[:, attention_column, :] = np.tile(y[:], (1, input_dim))
     return x, y
+
+def get_data_recurrent_sin(n, time_steps, input_dim, attention_column=13):
+    """
+    Data generation. x is purely random except that it's first value equals the target y.
+    In practice, the network should learn that the target = x[attention_column].
+    Therefore, most of its attention should be focused on the value addressed by attention_column.
+    :param n: the number of samples to retrieve.
+    :param time_steps: the number of time steps of your series.
+    :param input_dim: the number of dimensions of each element in the series.
+    :param attention_column: the column linked to the target. Everything else is purely random.
+    :return: x: model inputs, y: model targets
+    """
+    x = np.random.standard_normal(size=(n, time_steps, input_dim))   
+    y = np.random.randint(low=0, high=2, size=(n, 1))
+    
+    freq = 0
+    for i in range(n):        
+        if y[i] ==0:
+            freq = 0.1 * PI
+        else:
+            freq = 0.5 * PI
+        for t in range(attention_column, int(attention_column+time_steps/2)):
+            for d in range(input_dim):
+                x[i, t, d] = np.sin(t*freq) + 0.05*np.random.randn(1)
+    return x, y
+    
+get_data_recurrent = get_data_recurrent_sin
