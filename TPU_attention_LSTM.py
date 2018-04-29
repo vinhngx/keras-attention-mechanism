@@ -13,11 +13,11 @@ from tensorflow.contrib.tpu.python.tpu import tpu_optimizer
 from keras.layers.core import *
 from keras.models import *
 
-from attention_utils import get_data_recurrent
+from attention_utils import get_data_recurrent, generator_recurrent_sin
 
-INPUT_DIM = 128
+INPUT_DIM = 256
 TIME_STEPS = 64
-HIDDEN_UNITS = 256
+HIDDEN_UNITS = 512
 # if True, the attention vector is shared across the input_dimensions where the attention is applied.
 SINGLE_ATTENTION_VECTOR = False
 APPLY_ATTENTION_BEFORE_LSTM = False
@@ -224,17 +224,25 @@ def model_fn(features, labels, mode, params):
 class MyInput(object): 
     def __init__(self, is_training=True, is_eval=True, N=10000, batch_size=256):
           self.is_training = is_training
-          self.is_eval = is_eval
-          inputs_1, outputs = get_data_recurrent(N, TIME_STEPS, INPUT_DIM,
-                                                 ATTENTION_COLUMN)
-          self.outputs = np.asarray(outputs, 'float32')
-          self.inputs_1 = np.asarray(inputs_1, 'float32')
+          self.is_eval = is_eval                    
           self.batch_size = batch_size
+          self.N = N
     
     def input_fn(self, params):  
       batch_size = params['batch_size']
-      dataset = tf.data.Dataset.from_tensor_slices((self.inputs_1,
-                                                    self.outputs))
+      
+      inputs_1, outputs = get_data_recurrent(self.N, TIME_STEPS, INPUT_DIM, ATTENTION_COLUMN)
+      dataset = tf.data.Dataset.from_tensor_slices((inputs_1, outputs))
+      """
+      def get_data_generator():
+          return generator_recurrent_sin(self.N, TIME_STEPS, INPUT_DIM,
+                                                 ATTENTION_COLUMN)
+      
+      dataset = tf.data.Dataset.from_generator(get_data_generator,
+                                               (tf.float32, tf.float32),
+                                               (tf.TensorShape([TIME_STEPS, INPUT_DIM]),
+                                                tf.TensorShape([1])))
+      """
       
       if self.is_training:
           dataset = dataset.shuffle(buffer_size=1024)   # 1024 files in dataset
@@ -273,7 +281,7 @@ def main(argv):
           num_shards=8),
   )
 
-  train_data = MyInput(is_training=True, is_eval=False, N=10000)
+  train_data = MyInput(is_training=True, is_eval=False, N=1024)
   eval_data  = MyInput(is_training=False, is_eval=True, N=256)
   test_data  = MyInput(is_training=False, is_eval=False, N=256)  
 
@@ -281,7 +289,7 @@ def main(argv):
       model_fn=model_fn,
       use_tpu=USE_TPU,
       config=run_config,
-      train_batch_size=16384,
+      train_batch_size=1024,
       eval_batch_size=256,
       predict_batch_size=256,
       )

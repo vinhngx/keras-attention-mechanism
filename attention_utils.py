@@ -67,6 +67,7 @@ def get_data_recurrent_sin(n, time_steps, input_dim, attention_column=13):
     :param attention_column: the column linked to the target. Everything else is purely random.
     :return: x: model inputs, y: model targets
     """
+    print('Generating data ....')
     x = np.random.standard_normal(size=(n, time_steps, input_dim))   
     y = np.random.randint(low=0, high=2, size=(n, 1))
     
@@ -79,6 +80,41 @@ def get_data_recurrent_sin(n, time_steps, input_dim, attention_column=13):
         for t in range(attention_column, int(attention_column+time_steps/2)):
             for d in range(input_dim):
                 x[i, t, d] = np.sin(t*freq) + 0.05*np.random.randn(1)
-    return x, y
+    print('Done ....')                
+    return np.asarray(x, 'float32'), np.asarray(y, 'float32')
+
+# Using the generator pattern (an iterable)
+class generator_recurrent_sin(object):
+    def __init__(self, n, time_steps, input_dim, attention_column=13):
+        self.n = n        
+        self.time_steps = time_steps
+        self.input_dim = input_dim        
+        self.attention_column = attention_column
+        self.num = 0
+        
+    def __iter__(self):
+        return self.next()
+
+    # Python 3 compatibility
+    def __next__(self):
+        return self.next()
+
+    def next(self):
+        if self.num < self.n:
+            self.num += 1
+            x = np.random.standard_normal(size=(self.time_steps, self.input_dim))   
+            y = np.random.randint(low=0, high=2, size=(1))
+         
+            freq = 0
+            if y ==0:
+                freq = 0.1 * PI
+            else:
+                freq = 0.5 * PI
+            for t in range(self.attention_column, int(self.attention_column+self.input_dim/2)):
+                for d in range(self.attention_column):
+                    x[t, d] = np.sin(t*freq) + 0.05*np.random.randn(1)
+            yield x, y
+        else:
+            raise StopIteration()
     
 get_data_recurrent = get_data_recurrent_sin
