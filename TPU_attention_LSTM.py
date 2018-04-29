@@ -227,12 +227,13 @@ class MyInput(object):
           self.is_eval = is_eval                    
           self.batch_size = batch_size
           self.N = N
-    
+          inputs_1, outputs = get_data_recurrent(self.N, TIME_STEPS, INPUT_DIM, ATTENTION_COLUMN) 
+          self.inputs_1, self.outputs = np.asarray(inputs_1, dtype='float32'), np.asarray(outputs, dtype='float32')  
     def input_fn(self, params):  
       batch_size = params['batch_size']
       
-      inputs_1, outputs = get_data_recurrent(self.N, TIME_STEPS, INPUT_DIM, ATTENTION_COLUMN)
-      dataset = tf.data.Dataset.from_tensor_slices((inputs_1, outputs))
+
+      dataset = tf.data.Dataset.from_tensor_slices((self.inputs_1, self.outputs))
       """
       def get_data_generator():
           return generator_recurrent_sin(self.N, TIME_STEPS, INPUT_DIM,
