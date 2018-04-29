@@ -227,12 +227,13 @@ class MyInput(object):
           self.is_eval = is_eval                    
           self.batch_size = batch_size
           self.N = N
-    
+          inputs_1, outputs = get_data_recurrent(self.N, TIME_STEPS, INPUT_DIM, ATTENTION_COLUMN)
+          self.inputs_1, self.outputs = np.asarray(inputs_1, 'float32'), np.asarray(outputs, 'float32')
     def input_fn(self, params):  
       batch_size = params['batch_size']
       
-      inputs_1, outputs = get_data_recurrent(self.N, TIME_STEPS, INPUT_DIM, ATTENTION_COLUMN)
-      dataset = tf.data.Dataset.from_tensor_slices((inputs_1, outputs))
+      
+      dataset = tf.data.Dataset.from_tensor_slices((self.inputs_1, self.outputs))
       """
       def get_data_generator():
           return generator_recurrent_sin(self.N, TIME_STEPS, INPUT_DIM,
@@ -247,11 +248,10 @@ class MyInput(object):
       if self.is_training:
           dataset = dataset.shuffle(buffer_size=1024)   # 1024 files in dataset
           dataset = dataset.repeat()          
-          dataset = dataset.apply(
-              tf.contrib.data.batch_and_drop_remainder(batch_size)
-          )
-      else:
-          dataset = dataset.batch(batch_size)
+          
+      dataset = dataset.apply(
+          tf.contrib.data.batch_and_drop_remainder(batch_size)
+      )
               
       dataset = dataset.prefetch(4)
       images, labels = dataset.make_one_shot_iterator().get_next()
