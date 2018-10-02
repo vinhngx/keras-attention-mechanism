@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
+import os
 np.random.seed(1337)  # for reproducibility
 
 import tensorflow as tf
@@ -14,14 +15,23 @@ USE_TPU = False
 #USE_TPU = True
 TPU_NAME = 'longjob-inceptionv4'
 
-MODEL_DIR = './MLP/model_1'
+MODEL_DIR = './MLP/model_2'
+DATA_DIR = './MLP_data'
+
 if USE_TPU:
-    MODEL_DIR='gs://vinh-tutorial/output/MLP/model_1'
+    MODEL_DIR='gs://vinh-tutorial/output/MLP/model_2'
+    DATA_DIR = '/gs://vinh-tutorial/data'
+
+prefetch_buffer_size = 128
+num_files_infeed = 16
+shuffle_buffer_size = 512
+num_parallel_calls = 32
+
 
 # Parameters
-learning_rate = 0.1
+learning_rate = 0.01
 num_steps = 5000
-batch_size = 128
+batch_size = 64
 display_step = 100
 
 # Network Parameters
@@ -103,42 +113,72 @@ def model_fn(features, labels, mode, params):
                                         eval_metrics=eval_metrics
                                         )
 
+  
+class MLP_Input(object):
+  """Wrapper class that acts as the input_fn to TPUEstimator."""
 
-class MyInput(object): 
-    def __init__(self, is_training=True, is_eval=True, N=10000, input_dim=1):
-          self.is_training = is_training
-          self.is_eval = is_eval
-          inputs_1, outputs = self.createData(N, input_dim)
-          self.outputs = np.asarray(outputs, 'float32')
-          self.inputs_1 = np.asarray(inputs_1, 'float32')
-    
-    def createData(self, NUM_SAMPLES, input_dim):
-        X = np.random.randn(NUM_SAMPLES, input_dim).astype(np.float32)
-        
-        #y = np.random.randint(0,num_classes,size=(NUM_SAMPLES))
-        y = np.expand_dims(np.sum(X,axis=1)>0, axis=1)
-    
-        return X, y.astype(np.float32)
+  def __init__(self, is_training=True, is_eval=True, data_dir=None):
+    self.is_eval = is_eval
+    self.is_training = is_training
+    self.data_dir = data_dir if data_dir else DATA_DIR
 
-    def input_fn(self, params):      
-      dataset = tf.data.Dataset.from_tensor_slices((self.inputs_1,
-                                                    self.outputs))      
-      if self.is_training:
-          dataset = dataset.shuffle(buffer_size=1024)   # 1024 files in dataset
-          dataset = dataset.repeat()          
-          
-      dataset = dataset.apply(
-          tf.contrib.data.batch_and_drop_remainder(256)
-      )
-          
-      dataset = dataset.prefetch(4)
-      images, labels = dataset.make_one_shot_iterator().get_next()
-      if self.is_training or self.is_eval:
+  def dataset_parser(self, value):
+    """Parse an Imagenet record from value."""
+    keys_to_features = {
+        'X': tf.FixedLenFeature([], dtype=tf.string),
+        'y': tf.FixedLenFeature(shape=[1], dtype=tf.int64)            
+    }
+    parsed = tf.parse_single_example(value, keys_to_features)
+    X = tf.decode_raw(parsed['X'], tf.float32)
+    X = tf.reshape(X, [10000])
+    
+    y = tf.cast(parsed['y'], tf.float32)
+    return X, y
+
+  def __call__(self, params):
+    """Input function which provides a single batch for train or eval."""
+    # Retrieves the batch size for the current shard. The # of shards is
+    # computed according to the input pipeline deployment. See
+    # `tf.contrib.tpu.RunConfig` for details.
+    batch_size = params['batch_size']
+
+    # Shuffle the filenames to ensure better randomization
+    file_pattern = os.path.join(
+        self.data_dir, 'MLP_data_train*' if self.is_training 
+        else 'MLP_data_test*' )
+    dataset = tf.data.Dataset.list_files(file_pattern)
+    if self.is_training:
+      dataset = dataset.shuffle(buffer_size=128)  # 1024 files in dataset
+
+    if self.is_training:
+      dataset = dataset.repeat()
+
+    def prefetch_dataset(filename):
+      buffer_size =  prefetch_buffer_size
+      dataset = tf.data.TFRecordDataset(filename, buffer_size=buffer_size)
+      return dataset
+
+    dataset = dataset.apply(
+        tf.contrib.data.parallel_interleave(
+            prefetch_dataset, cycle_length=num_files_infeed,
+            sloppy=True))
+    dataset = dataset.shuffle(shuffle_buffer_size)
+
+    dataset = dataset.map(
+        self.dataset_parser,
+        num_parallel_calls=num_parallel_calls)
+    dataset = dataset.prefetch(batch_size)
+    dataset = dataset.apply(
+        tf.contrib.data.batch_and_drop_remainder(batch_size))
+
+    dataset = dataset.prefetch(2)  # Prefetch overlaps in-feed with training
+    images, labels = dataset.make_one_shot_iterator().get_next()
+    
+    if self.is_training or self.is_eval:
           return images, labels
-      else:
+    else:
           return dataset
-
-
+          
 
 
 def main(argv):
@@ -160,10 +200,6 @@ def main(argv):
           num_shards=8),
   )
 
-  train_data = MyInput(is_training=True, is_eval=False, N=10000, input_dim=num_input)
-  eval_data  = MyInput(is_training=False, is_eval=True, N=2560, input_dim=num_input)
-  test_data  = MyInput(is_training=False, is_eval=False, N=2560, input_dim=num_input)  
-  
   estimator = tpu_estimator.TPUEstimator(
       model_fn=model_fn,
       use_tpu=USE_TPU,
@@ -173,19 +209,19 @@ def main(argv):
       predict_batch_size=256,
       )
   
-  estimator.train(input_fn=train_data.input_fn, max_steps=10000)
+  estimator.train(input_fn=MLP_Input(True), max_steps=10000)
 
 
   #testing      
-  preds = estimator.evaluate(input_fn=eval_data.input_fn, steps=10, 
+  preds = estimator.evaluate(input_fn=MLP_Input(False, True), steps=10, 
                             #yield_single_examples=False
                             )
   
-  print(preds)
+  #print(preds)
   
-  preds = estimator.predict(input_fn=test_data.input_fn,
+  #preds = estimator.predict(input_fn=MLP_Input.input_fn,
                             #yield_single_examples=False
-                            )
+  #                          )
     
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)
