@@ -11,6 +11,10 @@ from tensorflow.contrib.tpu.python.tpu import tpu_config
 from tensorflow.contrib.tpu.python.tpu import tpu_estimator
 from tensorflow.contrib.tpu.python.tpu import tpu_optimizer
 
+config = tf.ConfigProto()
+config.gpu_options.allow_growth=True
+sess = tf.Session(config=config)
+
 USE_TPU = False
 #USE_TPU = True
 TPU_NAME = 'longjob-inceptionv4'
@@ -20,7 +24,7 @@ DATA_DIR = './MLP_data'
 
 if USE_TPU:
     MODEL_DIR='gs://vinh-tutorial/output/MLP/model_2'
-    DATA_DIR = '/gs://vinh-tutorial/data'
+    DATA_DIR = 'gs://vinh-tutorial/data'
 
 prefetch_buffer_size = 128
 num_files_infeed = 16
@@ -30,9 +34,9 @@ num_parallel_calls = 32
 
 # Parameters
 learning_rate = 0.01
-num_steps = 5000
-batch_size = 64
-display_step = 100
+num_steps = 10000
+batch_size = 2560
+display_step = 1000
 
 # Network Parameters
 num_input = 10000 
@@ -171,7 +175,7 @@ class MLP_Input(object):
     dataset = dataset.apply(
         tf.contrib.data.batch_and_drop_remainder(batch_size))
 
-    dataset = dataset.prefetch(2)  # Prefetch overlaps in-feed with training
+    dataset = dataset.prefetch(10)#.cache()  # Prefetch overlaps in-feed with training
     images, labels = dataset.make_one_shot_iterator().get_next()
     
     if self.is_training or self.is_eval:
@@ -204,20 +208,43 @@ def main(argv):
       model_fn=model_fn,
       use_tpu=USE_TPU,
       config=run_config,
-      train_batch_size=256,
-      eval_batch_size=256,
-      predict_batch_size=256,
+      train_batch_size=batch_size,
+      eval_batch_size=batch_size,
+      predict_batch_size=batch_size,
       )
   
-  estimator.train(input_fn=MLP_Input(True), max_steps=10000)
 
+  current_step = 0
+  train_input = MLP_Input(True)
+  test_input = MLP_Input(False, True)
+  
+  while current_step < num_steps:
+    # Train for up to steps_per_eval number of steps.
+    # At the end of training, a checkpoint will be written to --model_dir.
+    next_checkpoint = min(current_step + display_step,
+                          num_steps)
+    
+    estimator.train(input_fn=train_input, max_steps=next_checkpoint)
+    current_step = next_checkpoint
+    
 
-  #testing      
-  preds = estimator.evaluate(input_fn=MLP_Input(False, True), steps=10, 
+    # Evaluate the model on the most recent model in --model_dir.
+    # Since evaluation happens in batches of --eval_batch_size, some images
+    # may be consistently excluded modulo the batch size.
+    tf.logging.info('Starting to evaluate.')
+    eval_results = estimator.evaluate(
+                    input_fn=test_input,
+                    steps=1)
+    tf.logging.info('Eval results: %s' % eval_results)
+    
+
+  #testing    
+  print('>>>>>>>>>>>>>Testing...')  
+  preds = estimator.evaluate(input_fn=test_input, steps=10, 
                             #yield_single_examples=False
                             )
   
-  #print(preds)
+  print(preds)
   
   #preds = estimator.predict(input_fn=MLP_Input.input_fn,
                             #yield_single_examples=False
