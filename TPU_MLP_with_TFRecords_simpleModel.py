@@ -18,32 +18,33 @@ sess = tf.Session(config=config)
 
 #USE_TPU = False
 USE_TPU = True
-TPU_NAME = 'ee01_short_v2'
+TPU_NAME = 'node-us'
 
-MODEL_DIR = './MLP/model_2'
+MODEL_DIR = './MLP/model_simple'
 DATA_DIR = './MLP_data'
 
 if USE_TPU:
-    MODEL_DIR='gs://vinh-tutorial/output/MLP/model_2'
+    MODEL_DIR='gs://vinh-tutorial/output/MLP/model_simple'
     DATA_DIR = 'gs://vinh-tutorial/data/MLP_data'
 
-prefetch_buffer_size = 32 * 1024 * 1024
-num_files_infeed = 64
-shuffle_buffer_size = 128
-num_parallel_calls = 64
+prefetch_buffer_size = 128
+num_files_infeed = 16
+shuffle_buffer_size = 512
+num_parallel_calls = 32
 
 
 # Parameters
 learning_rate = 0.01
 num_steps = 10000
-batch_size = 2560
+batch_size = 256
 display_step = 1000
 
 # Network Parameters
 num_input = 10000 
 num_classes = 2 # recommendation outcome
-HIDDEN_UNITS = [4096, 2048, 1024, 512, 256]
-#HIDDEN_UNITS = [256, 256]
+
+#HIDDEN_UNITS = [4096, 2048, 1024, 512, 256]
+HIDDEN_UNITS = [256, 256] #logistic regression
 
 # Define the neural network
 def neural_net(x, HIDDEN_UNITS):
@@ -238,7 +239,7 @@ def main(argv):
     tf.logging.info('Starting to evaluate.')
     eval_results = estimator.evaluate(
                     input_fn=test_input,
-                    steps=5)
+                    steps=1)
     tf.logging.info('Eval results: %s' % eval_results)
     
 

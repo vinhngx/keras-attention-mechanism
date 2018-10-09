@@ -100,14 +100,14 @@ def createData(NUM_SAMPLES, feature_columns, num_classes):
     return X, y.astype(np.int64)
     
 NUM_FEATURES = 10000
-NUM_TRAIN = 1000
-NUM_TEST = 1000
+NUM_TRAIN = 10000
+NUM_TEST = 10000
 num_classes = 1
 
 feature_columns = ['feature_%d'%i for i in range(NUM_FEATURES)]
 
 # generate the data
-for i in range(128):
+for i in range(1):
     print(i)        
     (train_x, train_y) = createData(NUM_TRAIN, feature_columns, num_classes=num_classes)
     convert_to(train_x, train_y, 'MLP_data_train-%d'%i, data_directory='./MLP_data', num_shards=1)
