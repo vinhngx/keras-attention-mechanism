@@ -107,7 +107,7 @@ num_classes = 1
 feature_columns = ['feature_%d'%i for i in range(NUM_FEATURES)]
 
 # generate the data
-for i in range(1):
+for i in range(10):
     print(i)        
     (train_x, train_y) = createData(NUM_TRAIN, feature_columns, num_classes=num_classes)
     convert_to(train_x, train_y, 'MLP_data_train-%d'%i, data_directory='./MLP_data', num_shards=1)

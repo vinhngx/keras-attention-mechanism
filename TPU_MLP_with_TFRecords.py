@@ -16,8 +16,8 @@ config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 sess = tf.Session(config=config)
 
-#USE_TPU = False
-USE_TPU = True
+USE_TPU = False
+#USE_TPU = True
 TPU_NAME = 'ee01_short_v2'
 
 MODEL_DIR = './MLP/model_2'
@@ -49,6 +49,8 @@ HIDDEN_UNITS = [4096, 2048, 1024, 512, 256]
 def neural_net(x, HIDDEN_UNITS):
     for num_units in HIDDEN_UNITS:
         x = tf.layers.dense(x, num_units, activation='relu')
+        x = tf.layers.batch_normalization(x, training=True)
+
     out_layer = tf.layers.dense(x, 1, activation=None) #Binary output 
     return out_layer
 
@@ -201,9 +203,9 @@ def main(argv):
       model_dir=MODEL_DIR,
       save_checkpoints_secs=3600,
       session_config=tf.ConfigProto(
-          allow_soft_placement=True, log_device_placement=True),
+          allow_soft_placement=True, log_device_placement=False),
       tpu_config=tpu_config.TPUConfig(
-          iterations_per_loop=100,
+          iterations_per_loop=200,
           num_shards=8),
   )
 

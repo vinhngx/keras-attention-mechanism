@@ -3,13 +3,23 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
+import time
 import os
+import argparse
+
 np.random.seed(1337)  # for reproducibility
 
 import tensorflow as tf
 from tensorflow.contrib.tpu.python.tpu import tpu_config
 from tensorflow.contrib.tpu.python.tpu import tpu_estimator
 from tensorflow.contrib.tpu.python.tpu import tpu_optimizer
+
+from optimizers import LarcOptimizer, LossScalingOptimizer
+from var_storage import fp32_trainable_vars
+
+config = tf.ConfigProto()
+config.gpu_options.allow_growth=True
+sess = tf.Session(config=config)
 
 USE_TPU = False
 #USE_TPU = True
@@ -23,16 +33,16 @@ if USE_TPU:
     DATA_DIR = 'gs://vinh-tutorial/data/MLP_data'
 
 prefetch_buffer_size = 32 * 1024 * 1024
-num_files_infeed = 16
-shuffle_buffer_size = 512
-num_parallel_calls = 32
+num_files_infeed = 64
+shuffle_buffer_size = 128
+num_parallel_calls = 64
 
 
 # Parameters
 learning_rate = 0.01
-num_steps = 5000
-batch_size = 512
-display_step = 100
+num_steps = 10000
+batch_size = 2560
+display_step = 1000
 
 # Network Parameters
 num_input = 10000 
@@ -44,15 +54,34 @@ HIDDEN_UNITS = [4096, 2048, 1024, 512, 256]
 def neural_net(x, HIDDEN_UNITS):
     for num_units in HIDDEN_UNITS:
         x = tf.layers.dense(x, num_units, activation='relu')
+        #x = tf.layers.batch_normalization(x, training=True)
+        x = tf.contrib.layers.batch_norm(x, is_training=True)
+
     out_layer = tf.layers.dense(x, 1, activation=None) #Binary output 
     return out_layer
 
 def model_fn(features, labels, mode, params):
   """Define a simple Dense attention model in Keras."""
-  del params  # unused
-  
+  model_dtype   = params['dtype']
+  momentum      = params['momentum']
+  learning_rate_init = params['learning_rate_init']
+  learning_rate_power = params['learning_rate_power']
+  decay_steps   = params['decay_steps']
+  weight_decay  = params['weight_decay']
+  loss_scale    = params['loss_scale']
+  larc_eta      = params['larc_eta']
+  larc_mode     = params['larc_mode']
+    
+  inputs = tf.cast(features, model_dtype)
   # Build the neural network
-  logits = neural_net(features, HIDDEN_UNITS)
+  with fp32_trainable_vars(
+                regularizer=tf.contrib.layers.l2_regularizer(weight_decay)):
+      logits = neural_net(inputs, HIDDEN_UNITS)
+            
+  predicted_classes = tf.argmax(logits, axis=1, output_type=tf.int32)
+  logits = tf.cast(logits, tf.float32)
+        
+  
 
   if mode == tf.estimator.ModeKeys.PREDICT:
         predicted_classes = tf.greater(tf.sigmoid(logits), 0.5)
@@ -68,8 +97,20 @@ def model_fn(features, labels, mode, params):
       tf.nn.sigmoid_cross_entropy_with_logits(
           logits=logits, labels=labels
       )
-  )
-  optimizer = tf.train.AdamOptimizer()
+  )  
+
+  learning_rate = tf.train.polynomial_decay(
+            learning_rate_init, tf.train.get_global_step(),
+            decay_steps=decay_steps, end_learning_rate=0.,
+            power=learning_rate_power, cycle=False, name='learning_rate')
+  
+  opt = tf.train.MomentumOptimizer(
+    learning_rate, momentum, use_nesterov=True)
+  
+  opt = LarcOptimizer(opt, learning_rate, larc_eta, clip=larc_mode)
+  opt = LossScalingOptimizer(opt, scale=loss_scale)
+        
+  optimizer = opt
   if USE_TPU:
     optimizer = tpu_optimizer.CrossShardOptimizer(optimizer)
 
@@ -150,7 +191,7 @@ class MLP_Input(object):
     if self.is_training:
       dataset = dataset.shuffle(buffer_size=128)  # 1024 files in dataset
 
-    if self.is_training:
+    if self.is_training or self.is_eval:
       dataset = dataset.repeat()
 
     def prefetch_dataset(filename):
@@ -171,7 +212,9 @@ class MLP_Input(object):
     dataset = dataset.apply(
         tf.contrib.data.batch_and_drop_remainder(batch_size))
 
-    dataset = dataset.prefetch(2)  # Prefetch overlaps in-feed with training
+    dataset = dataset.prefetch(32) #.cache()  # Prefetch overlaps in-feed with training
+    #dataset = dataset.take(1).cache().repeat()
+
     images, labels = dataset.make_one_shot_iterator().get_next()
     
     if self.is_training or self.is_eval:
@@ -180,6 +223,23 @@ class MLP_Input(object):
           return dataset
           
 
+default_args = {
+    'data_dir' : None,
+    'log_dir' : None,
+    'precision' : 'fp16',
+    'momentum' : 0.9,
+    'learning_rate_init' : 2.0,
+    'learning_rate_power' : 2.0,
+    'weight_decay' : 1e-4,
+    'loss_scale' : 128.0,
+    'larc_eta' : 0.003,
+    'larc_mode' : 'clip',
+    'num_iter' : 90,
+    'iter_unit' : 'epoch',
+    'checkpoint_secs' : None,
+    'display_every' : 10,
+    'decay_steps' : 90 * 100000 // 2560,
+}
 
 def main(argv):
 
@@ -194,30 +254,56 @@ def main(argv):
       model_dir=MODEL_DIR,
       save_checkpoints_secs=3600,
       session_config=tf.ConfigProto(
-          allow_soft_placement=True, log_device_placement=True),
+          allow_soft_placement=True, log_device_placement=False),
       tpu_config=tpu_config.TPUConfig(
-          iterations_per_loop=1000,
+          iterations_per_loop=200,
           num_shards=8),
   )
 
+  params = {**default_args, **{'dtype' : tf.float16 if default_args['precision'] == 'fp16' else tf.float32}}
   estimator = tpu_estimator.TPUEstimator(
       model_fn=model_fn,
       use_tpu=USE_TPU,
       config=run_config,
       train_batch_size=batch_size,
-      eval_batch_size=batch_size,
-      predict_batch_size=batch_size,
+      eval_batch_size=1000,
+      predict_batch_size=1000,
+      params=params,
       )
   
-  estimator.train(input_fn=MLP_Input(True), max_steps=10000)
 
+  current_step = 0
+  train_input = MLP_Input(True)
+  test_input = MLP_Input(False, True)
+  
+  while current_step < num_steps:
+    # Train for up to steps_per_eval number of steps.
+    # At the end of training, a checkpoint will be written to --model_dir.
+    next_checkpoint = min(current_step + display_step,
+                          num_steps)
+    start_time = time.time()
+    estimator.train(input_fn=train_input, max_steps=next_checkpoint)
+    current_step = next_checkpoint
+    e_time = time.time() - start_time
+    print('>>>>>>>>Sample per sec: %.1f'%(display_step*batch_size/e_time))
 
-  #testing      
-  preds = estimator.evaluate(input_fn=MLP_Input(False, True), steps=10, 
+    # Evaluate the model on the most recent model in --model_dir.
+    # Since evaluation happens in batches of --eval_batch_size, some images
+    # may be consistently excluded modulo the batch size.
+    tf.logging.info('Starting to evaluate.')
+    eval_results = estimator.evaluate(
+                    input_fn=test_input,
+                    steps=5)
+    tf.logging.info('Eval results: %s' % eval_results)
+    
+
+  #testing    
+  print('>>>>>>>>>>>>>Testing...')  
+  preds = estimator.evaluate(input_fn=test_input, steps=10, 
                             #yield_single_examples=False
                             )
   
-  #print(preds)
+  print(preds)
   
   #preds = estimator.predict(input_fn=MLP_Input.input_fn,
                             #yield_single_examples=False
