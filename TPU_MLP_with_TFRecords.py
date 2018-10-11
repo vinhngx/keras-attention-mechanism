@@ -16,9 +16,10 @@ config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 sess = tf.Session(config=config)
 
-USE_TPU = False
-#USE_TPU = True
-TPU_NAME = 'ee01_short_v2'
+#USE_TPU = False
+USE_TPU = True
+#TPU_NAME = 'ee01_short_v2'
+TPU_NAME = 'ee01_short'
 
 MODEL_DIR = './MLP/model_2'
 DATA_DIR = './MLP_data'
@@ -35,8 +36,8 @@ num_parallel_calls = 64
 
 # Parameters
 learning_rate = 0.01
-num_steps = 10000
-batch_size = 2560
+num_steps = 100000
+batch_size = 1024 * 128
 display_step = 1000
 
 # Network Parameters
